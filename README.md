@@ -29,7 +29,7 @@ Empty set (0.00 sec)
 For this demo, I started 3 mysql servers locally using MySQL Sandbox.
 Let’s add them to ProxySQL.
 
-```
+``` sql
 Admin> INSERT INTO mysql_servers(hostgroup_id,hostname,port) VALUES (1,'127.0.0.1',21891);
 Query OK, 1 row affected (0.01 sec)
 
