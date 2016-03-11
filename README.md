@@ -29,6 +29,7 @@ Empty set (0.00 sec)
 For this demo, I started 3 mysql servers locally using MySQL Sandbox.
 Let’s add them to ProxySQL.
 
+```
 Admin> INSERT INTO mysql_servers(hostgroup_id,hostname,port) VALUES (1,'127.0.0.1',21891);
 Query OK, 1 row affected (0.01 sec)
 
@@ -47,24 +48,25 @@ Admin> SELECT * FROM mysql_servers;
 | 1            | 127.0.0.1 | 21893 | ONLINE | 1      | 0           | 1000            | 0                   |
 +--------------+-----------+-------+--------+--------+-------------+-----------------+---------------------+
 3 rows in set (0.00 sec)
-
+```
 
 All looks good so far.
 
 ProxySQL constantly monitors the servers it has configured. To do so, it is important to configure some variables.
-Let’s configure them:
+Let’s configure them.
 
+Add the credentials of the users required to monitor the backend (the user needs to be already created in mysql server):
+```
 Admin> UPDATE global_variables SET variable_value='monitor' WHERE variable_name='mysql-monitor_username';
 Query OK, 1 row affected (0.00 sec)
 
 Admin> UPDATE global_variables SET variable_value='monitor' WHERE variable_name='mysql-monitor_password';
 Query OK, 1 row affected (0.00 sec)
-
+```
+The we configure the various monitoring intervals:
+```
 Admin> UPDATE global_variables SET variable_value='2000' WHERE variable_name IN ('mysql-monitor_connect_interval','mysql-monitor_ping_interval','mysql-monitor_read_only_interval');
 Query OK, 3 rows affected (0.00 sec)
-
-Admin> SELECT * FROM global_variables WHERE variable_name LIKE 'mysql-monitor-%';
-Empty set (0.00 sec)
 
 Admin> SELECT * FROM global_variables WHERE variable_name LIKE 'mysql-monitor_%';
 +----------------------------------------+---------------------------------------------------+
@@ -89,21 +91,24 @@ Admin> SELECT * FROM global_variables WHERE variable_name LIKE 'mysql-monitor_%'
 | mysql-monitor_writer_is_also_reader    | true                                              |
 +----------------------------------------+---------------------------------------------------+
 17 rows in set (0.00 sec)
+```
 
+There are a lot of variables, and some are not used (yet) or not relevant for this howto. For now consider only the ones I listed before.
+Changes related to MySQL Monitor in table `global_variables` take places only after running the command `LOAD MYSQL VARIABLES TO RUNTIME`, and they are permanently stored to disk after running `SAVE MYSQL VARIABLES TO DISK` .
+Details [here](https://github.com/sysown/proxysql/blob/v1.1.1/doc/configuration_system.md) .
 
-There are a lot of variables, and some are not used or not important. Stick with the ones I listed before.
-Changes related to MySQL Monitor in table global_variables take places only after running the command LOAD MYSQL VARIABLES TO RUNTIME, and they are permanently stored after running SAVE MYSQL VARIABLES TO DISK .
-Details in https://github.com/sysown/proxysql/blob/v1.1.1/doc/configuration_system.md
-
+```
 Admin> LOAD MYSQL VARIABLES TO RUNTIME;
 Query OK, 0 rows affected (0.00 sec)
 
 Admin> SAVE MYSQL VARIABLES TO DISK;
 Query OK, 54 rows affected (0.02 sec)
+```
 
 Now, let’s see if ProxySQL is able to communicate with these hosts.
 ProxySQL has several tables where stores monitoring information.
 
+```
 Admin> SHOW DATABASES;
 +-----+---------+-------------------------------+
 | seq | name    | file                          |
@@ -127,10 +132,12 @@ Admin> SHOW TABLES FROM monitor;
 | mysql_server_replication_lag_log |
 +----------------------------------+
 6 rows in set (0.00 sec)
+```
 
 Not all the tables in monitor are currently used.
-But to check the relevant ones for now:
+For now we can check the relevant ones with the follow queries:
 
+```
 Admin> SELECT * FROM monitor.mysql_server_connect_log ORDER BY time_start DESC LIMIT 10;
 +-----------+-------+------------------+----------------------+---------------+
 | hostname  | port  | time_start       | connect_success_time | connect_error |
@@ -164,13 +171,14 @@ Admin> SELECT * FROM monitor.mysql_server_ping_log ORDER BY time_start DESC LIMI
 | 127.0.0.1 | 21891 | 1456968822684689 | 215               | NULL       |
 +-----------+-------+------------------+-------------------+------------+
 10 rows in set (0.01 sec)
-
+```
 
 We can conclude that all of the configured servers are healthy.
-One important thing to note here is that monitoring on connect and ping is performed based on the content of the table mysql_servers, even before this is loaded to RUNTIME.
+One important thing to note here is that monitoring on connect and ping is performed based on the content of the table `mysql_servers`, even before this is loaded to RUNTIME. This approach is intentional: in this way it is possible to perform basic health checks before adding the nodes in production.
 
 Now that we know that the servers are correctly monitored and alive, let’s enable them.
 
+```
 Admin> LOAD MYSQL SERVERS TO RUNTIME;
 Query OK, 0 rows affected (0.00 sec)
 
@@ -184,6 +192,9 @@ Admin> SELECT * FROM mysql_servers;
 +--------------+-----------+-------+--------+--------+-------------+-----------------+---------------------+
 3 rows in set (0.00 sec)
 MySQL replication hostgroups
+```
+
+
 
 Let’s check another table in the monitor schema:
 
