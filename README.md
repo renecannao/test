@@ -661,12 +661,13 @@ Admin> SELECT hostgroup hg, SUM(sum_time), SUM(count_star) FROM stats_mysql_quer
 2 rows in set (0.00 sec)
 ```
 
-## Query caching
+## Query Caching
 
-A popular use of ProxySQL is to act as a query cache. By default, queries aren’t cached, but it can be enabled setting cache_ttl (in milliseconds) in mysql_query_rules .
+A popular use of ProxySQL is to act as a query cache. By default, queries aren't cached, but it can be enabled setting `cache_ttl` (in milliseconds) in `mysql_query_rules` .
 
 Assume we want to also cache for 5 seconds all the queries sent to slaves.
 
+``` sql
 Admin> UPDATE mysql_query_rules set cache_ttl=5000 WHERE active=1 AND destination_hostgroup=2;
 Query OK, 2 rows affected (0.00 sec)
 
@@ -680,15 +681,16 @@ Admin> SELECT 1 FROM stats_mysql_query_digest_reset LIMIT 1; -- we reset the cou
 | 1 |
 +---+
 1 row in set (0.00 sec)
+```
 
+Now, we can run again the load test:
 
-Now, let’s run again the load test:
-
+```
 vagrant@ubuntu-14:~/sysbench/sysbench-0.5/sysbench$ ./sysbench --report-interval=5 --num-threads=4 --num-requests=0 --max-time=20 --test=tests/db/oltp.lua --mysql-user='msandbox' --mysql-password='msandbox' --oltp-table-size=10000 --mysql-host=127.0.0.1 --mysql-port=6033 run
+```
 
-
-And let’s verify the content of table stats_mysql_query_digest :
-
+We can now verify the content of table `stats_mysql_query_digest` :
+``` sql
 Admin> SELECT hostgroup hg, sum_time, count_star, digest_text FROM stats_mysql_query_digest ORDER BY sum_time DESC;
 +----+----------+------------+----------------------------------------------------------------------+
 | hg | sum_time | count_star | digest_text                                                          |
@@ -708,37 +710,37 @@ Admin> SELECT hostgroup hg, sum_time, count_star, digest_text FROM stats_mysql_q
 | -1 | 0        | 51261      | SELECT c FROM sbtest1 WHERE id=?                                     |
 +----+----------+------------+----------------------------------------------------------------------+
 13 rows in set (0.00 sec)
-
+```
 
 
 It is possible to see that what used to be the top 2 queries and being sent to the hostgroup2 , now:
-They are still sent to hostgroup2
-If they present in the query cache, they aren’t sent to any hostgroup and marked with a special hostgroup -1
-the total execution time for the queries cached is 0 (this means that the request was served within the same events loop
+* they are still sent to hostgroup2
+* if they present in the query cache, they aren’t sent to any hostgroup and marked with a special hostgroup -1
+* tthe total execution time for the queries cached is 0 (this means that the request was served within the same events loop
 
 Note: currently it is not possible to define the maximum amount of memory used by the query cache, neither is possible to force a selective or complete flush of the query cache.
-Right now, it is possible to control the memory footprint and the life of result set only through cache_ttl in mysql_query_rules : choose cache_ttl wisely until more control over query cache will be available.
+Right now, it is possible to control the memory footprint and the life of result set only through `cache_ttl` in `mysql_query_rules` : choose `cache_ttl` wisely until more control over query cache will be available.
 
 
-Query Rewrite
+## Query Rewrite
 
 
-ProxySQL support multiple ways to match a query, like flagIN, username, schemaname.
+ProxySQL supports multiple ways to match a query, like `flagIN`, `username`, `schemaname`.
 
 The most common way to match a query is writing a regular expression that matches the text of the query itself.
 To match the text of a query ProxySQL provides 2 mechanisms, using 2 different fields:
-- match_digest : it matches the regular expression again the digest of the query, as represented in stats_mysql_query_digest.query_digest
-- match_pattern : it matches the regular expression again the unmodified text of the query
+- `match_digest` : it matches the regular expression again the digest of the query, as represented in `stats_mysql_query_digest.query_digest`
+- `match_pattern` : it matches the regular expression again the unmodified text of the query
 
-Why those different mechanism? The digest of a query can be extremely smaller than the query itself (for example, an INSERT statement with several MB of data), thus running a regex against a smaller string is surely faster.
-So, in case you aren't trying to match a specific literal in the query, it is recommended (faster) to use match_digest .
+Why those different mechanism? The digest of a query can be extremely smaller than the query itself (for example, an `INSERT` statement with several MB of data), thus running a regex against a smaller string is surely faster.
+So, in case you aren't trying to match a specific literal in the query, it is recommended (faster) to use `match_digest` .
 
-Although, if you want to rewrite queries, you must match against the original query (using match_pattern), because it is the original query that needs to be rewritten.
+Although, if you want to rewrite queries, you must match against the original query (using `match_pattern`), because it is the original query that needs to be rewritten.
 
 
 
 An example:
-
+``` sql
 Admin> INSERT INTO mysql_query_rules (rule_id,active,username,match_pattern,replace_pattern,apply) VALUES (30,1,'msandbox','DISTINCT(.*)ORDER BY c','DISTINCT\1',1);
 Query OK, 1 row affected (0.00 sec)
 
@@ -756,21 +758,19 @@ Admin> SELECT rule_id, match_digest, match_pattern, replace_pattern, cache_ttl, 
 
 Admin> LOAD MYSQL QUERY RULES TO RUNTIME;
 Query OK, 0 rows affected (0.00 sec)
+```
 
+Let's try this new rules.
 
-Let’s try it!
-
+``` sql
 Admin> SELECT 1 FROM stats_mysql_query_digest_reset LIMIT 1;
+```
 
-
-
-
-
+```
 vagrant@ubuntu-14:~/sysbench/sysbench-0.5/sysbench$ ./sysbench --report-interval=5 --num-threads=4 --num-requests=0 --max-time=20 --test=tests/db/oltp.lua  --mysql-user='msandbox' --mysql-password='msandbox' --oltp-table-size=10000 --mysql-host=127.0.0.1 --mysql-port=6033 run
+```
 
-
-
-
+``` sql
 Admin> SELECT hostgroup hg, sum_time, count_star, digest_text FROM stats_mysql_query_digest ORDER BY sum_time DESC;
 +----+----------+------------+----------------------------------------------------------------------+
 | hg | sum_time | count_star | digest_text                                                          |
@@ -790,13 +790,14 @@ Admin> SELECT hostgroup hg, sum_time, count_star, digest_text FROM stats_mysql_q
 | -1 | 0        | 45235      | SELECT c FROM sbtest1 WHERE id=?                                     |
 +----+----------+------------+----------------------------------------------------------------------+
 13 rows in set (0.00 sec)
+```
 
 
+Something looks wrong, as no rewrite seems to have happened.
+This is intentional, so we can now troubleshoot.
+A very useful table for troubleshooting is `stats.stats_mysql_query_rules` :
 
-Something looks wrong, as no rewrite seems to have happened. Let's troubleshoot.
-A very useful table for troubleshooting is stats.stats_mysql_query_rules :
-
-
+``` sql
 Admin> SELECT hits, mysql_query_rules.rule_id, match_digest, match_pattern, replace_pattern, cache_ttl, apply FROM mysql_query_rules NATURAL JOIN stats.stats_mysql_query_rules ORDER BY mysql_query_rules.rule_id;
 +-------+---------+-------------------------------------+------------------------+-----------------+-----------+-------+
 | hits  | rule_id | match_digest                        | match_pattern          | replace_pattern | cache_ttl | apply |
@@ -806,12 +807,14 @@ Admin> SELECT hits, mysql_query_rules.rule_id, match_digest, match_pattern, repl
 | 0     | 30      | NULL                                | DISTINCT(.*)ORDER BY c | DISTINCT\1      | NULL      | 1     |
 +-------+---------+-------------------------------------+------------------------+-----------------+-----------+-------+
 3 rows in set (0.01 sec)
+```
 
-Ok, it seems clear something is wrong: rule with rule_id has 0 hits!
+It seems clear something is wrong: rule with `rule_id=30` has 0 hits!
 
-The problem is that rule with rule_id=20 also matches queries that would match in rule_id=30 , but apply=1 in rule number 20 will prevent to reach rule number 30.
+The problem is that rule with `rule_id=20` also matches queries that would match in `rule_id=30` , although `apply=1` in rule number 20 will prevent to reach rule number 30.
 Let fix this:
 
+``` sql
 Admin> UPDATE mysql_query_rules SET apply=0 WHERE rule_id=20;
 Query OK, 1 row affected (0.00 sec)
 
@@ -824,16 +827,18 @@ Admin> SELECT rule_id, match_digest, match_pattern, replace_pattern, cache_ttl, 
 | 30      | NULL                                | DISTINCT(.*)ORDER BY c | DISTINCT\1      | NULL      | 1     |
 +---------+-------------------------------------+------------------------+-----------------+-----------+-------+
 3 rows in set (0.00 sec)
-
+```
 
 Now should work!
 Let's load the rules again:
 
+``` sql
 Admin> LOAD MYSQL QUERY RULES TO RUNTIME;
 Query OK, 0 rows affected (0.00 sec)
+```
 
-Note: when running "LOAD MYSQL QUERY RULES TO RUNTIME" , not only internal query processing structures are reset, but also the counters in stats.stats_mysql_query_rules :
-
+Note: when running `LOAD MYSQL QUERY RULES TO RUNTIME` not only internal query processing structures are reset, but also the counters in `stats.stats_mysql_query_rules` :
+``` sql
 Admin> SELECT * FROM stats.stats_mysql_query_rules;
 +---------+------+
 | rule_id | hits |
@@ -843,21 +848,21 @@ Admin> SELECT * FROM stats.stats_mysql_query_rules;
 | 30      | 0    |
 +---------+------+
 3 rows in set (0.00 sec)
-
+```
 
 Let's try again:
 
+``` sql
 Admin> SELECT 1 FROM stats_mysql_query_digest_reset LIMIT 1;
+```
 
-
+```
 vagrant@ubuntu-14:~/sysbench/sysbench-0.5/sysbench$ ./sysbench --report-interval=5 --num-threads=4 --num-requests=0 --max-time=20 --test=tests/db/oltp.lua --mysql-user='msandbox' --mysql-password='msandbox' --oltp-table-size=10000 --mysql-host=127.0.0.1 --mysql-port=6033 run
+```
 
+And now we can verify:
 
-
-
-
-Verify:
-
+``` sql
 Admin> SELECT hits, mysql_query_rules.rule_id, match_digest, match_pattern, replace_pattern, cache_ttl, apply FROM mysql_query_rules NATURAL JOIN stats.stats_mysql_query_rules ORDER BY mysql_query_rules.rule_id;
 +-------+---------+-------------------------------------+------------------------+-----------------+-----------+-------+
 | hits  | rule_id | match_digest                        | match_pattern          | replace_pattern | cache_ttl | apply |
@@ -867,12 +872,12 @@ Admin> SELECT hits, mysql_query_rules.rule_id, match_digest, match_pattern, repl
 | 4856  | 30      | NULL                                | DISTINCT(.*)ORDER BY c | DISTINCT\1      | NULL      | 1     |
 +-------+---------+-------------------------------------+------------------------+-----------------+-----------+-------+
 3 rows in set (0.01 sec)
-
+```
 
 There are rewrites, looks good :-)
 
 What about query execution ?
-
+``` sql
 Admin> SELECT hostgroup hg, sum_time, count_star, digest_text FROM stats_mysql_query_digest ORDER BY sum_time DESC;
 +----+----------+------------+-------------------------------------------------------------+
 | hg | sum_time | count_star | digest_text                                                 |
@@ -892,11 +897,11 @@ Admin> SELECT hostgroup hg, sum_time, count_star, digest_text FROM stats_mysql_q
 | -1 | 0        | 41201      | SELECT c FROM sbtest1 WHERE id=?                            |
 +----+----------+------------+-------------------------------------------------------------+
 13 rows in set (0.00 sec)
-
+```
 
 Note:
-Rules with rule_id=20 and rule_id=30 can be merged together into a single rule.
-They are separated to describe the importance of "apply" field, and that not only multiple rules can match the same query, but multiple rules can transform and apply settings to the same query.
+Rules with `rule_id=20` and `rule_id=30` can be merged together into a single rule.
+They are separated to describe the importance of `apply` field, and that not only multiple rules can match the same query, but multiple rules can transform and apply settings to the same query.
 
 
 
@@ -905,20 +910,26 @@ They are separated to describe the importance of "apply" field, and that not onl
 Few more example of query rewrite.
 
 We want to rewrite queries like:
+``` sql
 SELECT c FROM sbtest1 WHERE id=?
+```
 into:
+``` sql
 SELECT c FROM sbtest2 WHERE id=?
+```
 But only for ids between 1000 and 3999 ...
 I know, this makes no sense, it is just to show some potentials, including the ability some complex sharding!!
 
 How this looks in regex? :-)
 
+``` sql
 Admin> INSERT INTO mysql_query_rules (rule_id,active,username,match_pattern,replace_pattern,apply) VALUES (5,1,'msandbox','^SELECT (c) FROM sbtest(1) WHERE id=(1|2|3)(...)$','SELECT c FROM sbtest2 WHERE id=\3\4',1);
 Query OK, 1 row affected (0.00 sec)
-
+```
 
 Note that "c" and "1" (in sbtest1) are selected just to show the syntax
 
+``` sql
 Admin> SELECT rule_id, match_digest, match_pattern, replace_pattern, cache_ttl, apply FROM mysql_query_rules ORDER BY rule_id;
 +---------+-------------------------------------+---------------------------------------------+------------------------------------+-----------+-------+
 | rule_id | match_digest                        | match_pattern                               | replace_pattern                    | cache_ttl | apply |
@@ -929,25 +940,25 @@ Admin> SELECT rule_id, match_digest, match_pattern, replace_pattern, cache_ttl, 
 | 30      | NULL                                | DISTINCT(.*)ORDER BY c                      | DISTINCT\1                         | NULL      | 1     |
 +---------+-------------------------------------+---------------------------------------------+------------------------------------+-----------+-------+
 4 rows in set (0.00 sec)
-
+```
 
 Let's try it.
 
-
+``` sql
 Admin> SELECT 1 FROM stats_mysql_query_digest_reset LIMIT 1;
 
 Admin> LOAD MYSQL QUERY RULES TO RUNTIME;
 Query OK, 0 rows affected (0.00 sec)
+```
 
-
-
+```
 vagrant@ubuntu-14:~/sysbench/sysbench-0.5/sysbench$ ./sysbench --report-interval=5 --num-threads=4 --num-requests=0 --max-time=20 --test=tests/db/oltp.lua --mysql-user='msandbox' --mysql-password='msandbox' --oltp-table-size=10000 --mysql-host=127.0.0.1 --mysql-port=6033 run
-
-
+```
 
 
 Did it work? Apparently yes :)
 
+``` sql
 Admin> SELECT hits, mysql_query_rules.rule_id, match_digest, match_pattern, replace_pattern, cache_ttl, apply FROM mysql_query_rules NATURAL JOIN stats.stats_mysql_query_rules;                                              +-------+---------+-------------------------------------+---------------------------------------------------+-------------------------------------+-----------+-------+
 | hits  | rule_id | match_digest                        | match_pattern                                     | replace_pattern                     | cache_ttl | apply |
 +-------+---------+-------------------------------------+---------------------------------------------------+-------------------------------------+-----------+-------+
@@ -957,7 +968,6 @@ Admin> SELECT hits, mysql_query_rules.rule_id, match_digest, match_pattern, repl
 | 8567  | 30      | NULL                                | DISTINCT(.*)ORDER BY c                            | DISTINCT\1                          | NULL      | 1     |
 +-------+---------+-------------------------------------+---------------------------------------------------+-------------------------------------+-----------+-------+
 4 rows in set (0.00 sec)
-
 
 Admin> SELECT hostgroup hg, sum_time, count_star, digest_text FROM stats_mysql_query_digest ORDER BY sum_time DESC;
 +----+----------+------------+-------------------------------------------------------------+
@@ -979,6 +989,6 @@ Admin> SELECT hostgroup hg, sum_time, count_star, digest_text FROM stats_mysql_q
 | -1 | 0        | 74495      | SELECT c FROM sbtest1 WHERE id=?                            |
 +----+----------+------------+-------------------------------------------------------------+
 14 rows in set (0.01 sec)
-
+```
 
 
