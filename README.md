@@ -12,7 +12,7 @@ $ mysql -u admin -padmin -h 127.0.0.1 -P6032
 
 First, let's verify that there is nothing configured. No entries in `mysql_servers`, nor in `mysql_replication_hostgroups` or `mysql_query_rules` tables.
 
-```
+``` sql
 mysql> \R Admin>
 PROMPT set to 'Admin> '
 Admin> SELECT * FROM mysql_servers;
@@ -25,7 +25,7 @@ Admin> SELECT * from mysql_query_rules;
 Empty set (0.00 sec)
 ```
 
-
+### Add backends
 For this demo, I started 3 mysql servers locally using MySQL Sandbox.
 Let’s add them to ProxySQL.
 
@@ -52,19 +52,21 @@ Admin> SELECT * FROM mysql_servers;
 
 All looks good so far.
 
+### Configure monitoring
+
 ProxySQL constantly monitors the servers it has configured. To do so, it is important to configure some variables.
 Let’s configure them.
 
 Add the credentials of the users required to monitor the backend (the user needs to be already created in mysql server):
-```
+``` sql
 Admin> UPDATE global_variables SET variable_value='monitor' WHERE variable_name='mysql-monitor_username';
 Query OK, 1 row affected (0.00 sec)
 
 Admin> UPDATE global_variables SET variable_value='monitor' WHERE variable_name='mysql-monitor_password';
 Query OK, 1 row affected (0.00 sec)
 ```
-The we configure the various monitoring intervals:
-```
+Then we configure the various monitoring intervals:
+``` sql
 Admin> UPDATE global_variables SET variable_value='2000' WHERE variable_name IN ('mysql-monitor_connect_interval','mysql-monitor_ping_interval','mysql-monitor_read_only_interval');
 Query OK, 3 rows affected (0.00 sec)
 
@@ -97,7 +99,7 @@ There are a lot of variables, and some are not used (yet) or not relevant for th
 Changes related to MySQL Monitor in table `global_variables` take places only after running the command `LOAD MYSQL VARIABLES TO RUNTIME`, and they are permanently stored to disk after running `SAVE MYSQL VARIABLES TO DISK` .
 Details [here](https://github.com/sysown/proxysql/blob/v1.1.1/doc/configuration_system.md) .
 
-```
+``` sql
 Admin> LOAD MYSQL VARIABLES TO RUNTIME;
 Query OK, 0 rows affected (0.00 sec)
 
@@ -105,10 +107,12 @@ Admin> SAVE MYSQL VARIABLES TO DISK;
 Query OK, 54 rows affected (0.02 sec)
 ```
 
+### check health of backends
+
 Now, let’s see if ProxySQL is able to communicate with these hosts.
 ProxySQL has several tables where stores monitoring information.
 
-```
+``` sql
 Admin> SHOW DATABASES;
 +-----+---------+-------------------------------+
 | seq | name    | file                          |
@@ -135,9 +139,9 @@ Admin> SHOW TABLES FROM monitor;
 ```
 
 Not all the tables in monitor are currently used.
-For now we can check the relevant ones with the follow queries:
+For now we can check the relevant tables with the follow queries:
 
-```
+``` sql
 Admin> SELECT * FROM monitor.mysql_server_connect_log ORDER BY time_start DESC LIMIT 10;
 +-----------+-------+------------------+----------------------+---------------+
 | hostname  | port  | time_start       | connect_success_time | connect_error |
@@ -178,7 +182,7 @@ One important thing to note here is that monitoring on connect and ping is perfo
 
 Now that we know that the servers are correctly monitored and alive, let’s enable them.
 
-```
+``` sql
 Admin> LOAD MYSQL SERVERS TO RUNTIME;
 Query OK, 0 rows affected (0.00 sec)
 
@@ -191,27 +195,32 @@ Admin> SELECT * FROM mysql_servers;
 | 1            | 127.0.0.1 | 21893 | ONLINE | 1      | 0           | 1000            | 0                   |
 +--------------+-----------+-------+--------+--------+-------------+-----------------+---------------------+
 3 rows in set (0.00 sec)
-MySQL replication hostgroups
 ```
 
 
+## MySQL replication hostgroups
 
-Let’s check another table in the monitor schema:
+Let's check another table in the monitor schema , `monitor.mysql_server_read_only_log`:
 
+``` sql
 Admin> SELECT * FROM monitor.mysql_server_read_only_log ORDER BY time_start DESC LIMIT 10;
 Empty set (0.00 sec)
+```
 
 This table is currently empty.
-The reason is that ProxySQL checks the value of read_only only for servers configured in hostgroups that are configured in mysql_replication_hostgroups. This table is currently empty:
+The reason is that ProxySQL checks the value of `read_only` only for servers configured in hostgroups that are configured in `mysql_replication_hostgroups`. This table is currently empty:
 
+``` sql
 Admin> SELECT * FROM mysql_replication_hostgroups;
 Empty set (0.00 sec)
+```
 
 But what is the functionality of this table?
 With this table, the listed hostgroups can be configured in pairs of writer and reader hostgroups.
-ProxySQL will monitor the value of read_only for all the servers in specified hostgroups, and based on the value of read_only will assign the server to the writer or reader hostgroups.
+ProxySQL will monitor the value of `read_only` for all the servers in specified hostgroups, and based on the value of `read_only` will assign the server to the writer or reader hostgroups.
 To make an example:
 
+``` sql
 Admin> SHOW CREATE TABLE mysql_replication_hostgroups\G
 *************************** 1. row ***************************
        table: mysql_replication_hostgroups
@@ -223,12 +232,15 @@ UNIQUE (reader_hostgroup))
 
 Admin> INSERT INTO mysql_replication_hostgroups VALUES (1,2);
 Query OK, 1 row affected (0.00 sec)
+```
 
-Now, all the servers that are either configured in hostgroup 1 or 2 will be moved to a correct hostgroup:
-If they have read_only=0 , they will be moved to hostgroup 1
-If they have read_only=1 , they will be moved to hostgroup 2
+Now, all the servers that are either configured in hostgroup 1 or 2 will be moved to the correct hostgroup:
+* If they have `read_only=0` , they will be moved to hostgroup 1
+* If they have `read_only=1` , they will be moved to hostgroup 2
 
-But at this moment, the algorithm is still not running, because the new table isn’t loaded at runtime. In fact:
+But at this moment, the algorithm is still not running, because the new table isn't loaded at runtime. In fact:
+
+``` sql
 Admin> SELECT * FROM mysql_servers;
 +--------------+-----------+-------+--------+--------+-------------+-----------------+---------------------+
 | hostgroup_id | hostname  | port  | status | weight | compression | max_connections | max_replication_lag |
@@ -238,15 +250,17 @@ Admin> SELECT * FROM mysql_servers;
 | 1            | 127.0.0.1 | 21893 | ONLINE | 1      | 0           | 1000            | 0                   |
 +--------------+-----------+-------+--------+--------+-------------+-----------------+---------------------+
 3 rows in set (0.00 sec)
+```
 
+Let's load `mysql_replication_hostgroups` at runtime using the same `LOAD` command for MYSQL SERVERS : in fact `LOAD MYSQL SERVERS TO RUNTIME` processes both `mysql_servers` and `mysql_replication_hostgroups` tables.
 
-Let’s load mysql_replication_hostgroups at runtime using the same LOAD command for MYSQL SERVERS : LOAD MYSQL SERVERS TO RUNTIME in fact process both mysql_servers and mysql_replication_hostgroups tables.
-
+``` sql
 Admin> LOAD MYSQL SERVERS TO RUNTIME;                                                                                                              Query OK, 0 rows affected (0.00 sec)
+```
 
-Wait few seconds, and …
+Wait few seconds, and check again the status:
 
-
+``` sql
 Admin> SELECT * FROM monitor.mysql_server_read_only_log ORDER BY time_start DESC LIMIT 10;                                                         +-----------+-------+------------------+--------------+-----------+-------+
 | hostname  | port  | time_start       | success_time | read_only | error |
 +-----------+-------+------------------+--------------+-----------+-------+
@@ -262,10 +276,12 @@ Admin> SELECT * FROM monitor.mysql_server_read_only_log ORDER BY time_start DESC
 | 127.0.0.1 | 21891 | 1456969628782328 | 433          | 0         | NULL  |
 +-----------+-------+------------------+--------------+-----------+-------+
 10 rows in set (0.01 sec)
+```
 
-Allright, ProxySQL is monitoring the read_only value for the servers.
-And also created hostgroup2 where it moved servers from hostgroup1 with read_only=1 (readers).
+Allright, ProxySQL is monitoring the `read_only` value for the servers.
+And also created hostgroup2 where it moved servers with `read_only=1` (readers) from hostgroup1 .
 
+``` sql
 Admin> SELECT * FROM mysql_servers;
 +--------------+-----------+-------+--------+--------+-------------+-----------------+---------------------+
 | hostgroup_id | hostname  | port  | status | weight | compression | max_connections | max_replication_lag |
@@ -275,22 +291,26 @@ Admin> SELECT * FROM mysql_servers;
 | 2            | 127.0.0.1 | 21893 | ONLINE | 1      | 0           | 1000            | 0                   |
 +--------------+-----------+-------+--------+--------+-------------+-----------------+---------------------+
 3 rows in set (0.00 sec)
+```
 
-All looks good, let’s save the configuration to disk:
 
+All looks good. It is time to save the configuration to disk:
+
+``` sql
 Admin> SAVE MYSQL SERVERS TO DISK;
 Query OK, 0 rows affected (0.01 sec)
 
 Admin> SAVE MYSQL VARIABLES TO DISK;
 Query OK, 54 rows affected (0.00 sec)
+```
 
 
+## MySQL Users
 
-MySQL Users
+After we configure the servers in `mysql_servers`, we also need to configure mysql users.
+This is performed using table `mysql_servers`:
 
-After we configure the servers in mysql_servers, we also need to configure mysql users.
-This is performed using table mysql_servers:
-
+``` sql
 Admin> SELECT * FROM mysql_users;
 Empty set (0.00 sec)
 
@@ -313,10 +333,12 @@ max_connections INT CHECK (max_connections >=0) NOT NULL DEFAULT 10000,
 PRIMARY KEY (username, backend),
 UNIQUE (username, frontend))
 1 row in set (0.00 sec)
+```
 
 Table is initially empty.
-Let’s start configuring users.
+Let's start configuring users.
 
+``` sql
 Admin> INSERT INTO mysql_users(username,password,default_hostgroup) VALUES ('root','',1);
 Query OK, 1 row affected (0.00 sec)
 
@@ -330,22 +352,30 @@ Admin> SELECT * FROM mysql_users;                                               
 | msandbox | msandbox | 1      | 0       | 1                 | NULL           | 0             | 0                      | 0            | 1       | 1        | 10000           |
 +----------+----------+--------+---------+-------------------+----------------+---------------+------------------------+--------------+---------+----------+-----------------+
 2 rows in set (0.00 sec)
+```
 
-We left most fields with the default value. The most important fields we configured are : username, password, and default_hostgroup.
-The meaning of username and password should be very clear.
-Default_hostgroup is the hostgroup that will be used to send traffic generated by that specific user if there is no matching query rules for a specific query (more details later on).
+We left most fields with the default value. The most important fields we configured are :
+* `username`
+* `password`
+* `default_hostgroup`
+
+The meaning of `username` and `password` should be very clear.
+`default_hostgroup` is the hostgroup that will be used to send traffic generated by that specific user if there is no matching query rules for a specific query (more details later on).
 
 
 Again, load configuration to runtime to make it live, and save it to disk to make it persistent across restart.
 
+``` sql
 Admin> LOAD MYSQL USERS TO RUNTIME;
 Query OK, 0 rows affected (0.00 sec)
 
 Admin> SAVE MYSQL USERS TO DISK;
 Query OK, 0 rows affected (0.01 sec)
+```
 
-Let’s try to connect from a different terminal:
+We can now try to connect from a different terminal:
 
+```
 vagrant@ubuntu-14:~$ mysql -u msandbox -pmsandbox -h 127.0.0.1 -P6033 -e "SELECT 1"
 Warning: Using a password on the command line interface can be insecure.
 +---+
@@ -360,31 +390,33 @@ Warning: Using a password on the command line interface can be insecure.
 +--------+
 |  21891 |
 +--------+
+```
 
 It seems it worked, and not surprisingly the query was sent to the server listening on port 21891, the master, because it is configured on hostgroup1 and is the default for user msandbox.
 
 
 
-Functional benchmark
+## Functional tests
 
-Next, let’s try some benchmark.
+Now we can try some "benchmark" to verify that ProxySQL is functional.
+
 Assuming you already created sysbench tables, you can run a load test using:
-
+```
 vagrant@ubuntu-14:~/sysbench/sysbench-0.5/sysbench$ ./sysbench --report-interval=5 --num-threads=4 --num-requests=0 --max-time=20 --test=tests/db/oltp.lua --mysql-user='msandbox' --mysql-password='msandbox' --oltp-table-size=10000 --mysql-host=127.0.0.1 --mysql-port=6032 run
 
 [ output omitted ]
+```
 
-All run correctly through ProxySQL . Does ProxySQL exports metrics about what was running? Yes …
-
-
-
-
-
-ProxySQL Statistics
-
-ProxySQL collects a lot of real time statistics in the stats schema:
+All run correctly through ProxySQL . Does ProxySQL exports metrics about what was running? Yes...
 
 
+
+
+## ProxySQL Statistics
+
+ProxySQL collects a lot of real time statistics in the `stats` schema:
+
+``` sql
 Admin> SHOW SCHEMAS;
 +-----+---------+-------------------------------+
 | seq | name    | file                          |
@@ -409,9 +441,13 @@ Admin> SHOW TABLES FROM stats;
 | stats_mysql_global             |
 +--------------------------------+
 7 rows in set (0.00 sec)
+```
 
-A lot of tables in the stats schema. We will analyze the all.
+A lot of tables are present the stats schema. We will analyze the all.
 
+#### stats.stats_mysql_connection_pool
+
+``` sql
 Admin> SELECT * FROM stats.stats_mysql_connection_pool;
 +-----------+-----------+----------+--------------+----------+----------+--------+---------+---------+-----------------+-----------------+
 | hostgroup | srv_host  | srv_port | status       | ConnUsed | ConnFree | ConnOK | ConnERR | Queries | Bytes_data_sent | Bytes_data_recv |
@@ -422,15 +458,18 @@ Admin> SELECT * FROM stats.stats_mysql_connection_pool;
 | 2         | 127.0.0.1 | 21892    | ONLINE       | 0        | 0        | 0      | 0       | 0       | 0               | 0               |
 +-----------+-----------+----------+--------------+----------+----------+--------+---------+---------+-----------------+-----------------+
 4 rows in set (0.00 sec)
+```
 
-
-A small parenthesis: currently, when a server is removed (completely removed, or moved away from a hostgroup) , it is internally marked as “OFFLINE_HARD” and not really removed.
-This is why it shows server on port 21892 as OFFLINE_HARD for hostgroup1 .
+A small parenthesis: currently, when a server is removed (completely removed, or moved away from a hostgroup) , it is internally marked as `OFFLINE_HARD` and not really removed.
+This is why it shows server on port 21892 as `OFFLINE_HARD` for hostgroup1 .
 
 This table returns a lot of information about the traffic sent to each server.
 As expected, all traffic was sent to server on port 21891 , the master.
-But what type of queries exactly?
 
+#### stats_mysql_commands_counters
+
+What type of queries were exactly? Table `stats_mysql_commands_counters` anwswers this question:
+``` sql
 Admin> SELECT * FROM stats_mysql_commands_counters WHERE Total_cnt;
 +---------+---------------+-----------+-----------+-----------+---------+---------+----------+----------+-----------+-----------+--------+--------+---------+----------+
 | Command | Total_Time_us | Total_cnt | cnt_100us | cnt_500us | cnt_1ms | cnt_5ms | cnt_10ms | cnt_50ms | cnt_100ms | cnt_500ms | cnt_1s | cnt_5s | cnt_10s | cnt_INFs |
@@ -443,11 +482,16 @@ Admin> SELECT * FROM stats_mysql_commands_counters WHERE Total_cnt;
 | UPDATE  | 6635032       | 14498     | 333       | 11149     | 1597    | 1361    | 42       | 16       | 0         | 0         | 0      | 0      | 0       | 0        |
 +---------+---------------+-----------+-----------+-----------+---------+---------+----------+----------+-----------+-----------+--------+--------+---------+----------+
 6 rows in set (0.00 sec)
+```
 
-Table stats_mysql_commands_counters returns detailed information about the type of statements executed, and the distribution of execution time!
+Table `stats_mysql_commands_counters` returns detailed information about the type of statements executed, and the distribution of execution time!
 
-Can we get more details about the query that were executed? Table stats_mysql_query_digest help in this:
+### stats_mysql_query_digest
 
+Table `stats_mysql_commands_counters` provides very useful information.
+Can we get more details about the query that were executed? Table `stats_mysql_query_digest` helps in this:
+
+``` sql
 Admin> SELECT * FROM stats_mysql_query_digest ORDER BY sum_time DESC;
 +-----------+--------------------+----------+--------------------+----------------------------------------------------------------------+------------+------------+------------+----------+----------+----------+
 | hostgroup | schemaname         | username | digest             | digest_text                                                          | count_star | first_seen | last_seen  | sum_time | min_time | max_time |
@@ -468,10 +512,12 @@ Admin> SELECT * FROM stats_mysql_query_digest ORDER BY sum_time DESC;
 | 1         | information_schema | msandbox | 0x52A2BA0B226CD90D | select @@version_comment limit ?                                     | 2          | 1456970758 | 1456970769 | 0        | 0        | 0        |
 +-----------+--------------------+----------+--------------------+----------------------------------------------------------------------+------------+------------+------------+----------+----------+----------+
 14 rows in set (0.00 sec)
+```
 
 Too much information makes it hard to format it here.
 Let get only important metrics:
 
+``` sql
 Admin> SELECT hostgroup hg, sum_time, count_star, digest_text FROM stats_mysql_query_digest ORDER BY sum_time DESC;
 +----+----------+------------+----------------------------------------------------------------------+
 | hg | sum_time | count_star | digest_text                                                          |
@@ -492,14 +538,17 @@ Admin> SELECT hostgroup hg, sum_time, count_star, digest_text FROM stats_mysql_q
 | 1  | 0        | 2          | select @@version_comment limit ?                                     |
 +----+----------+------------+----------------------------------------------------------------------+
 14 rows in set (0.00 sec)
+```
 
-Way more readable!
-All traffic is sent to hostgroup1. Let’s assume that now we want to send specific queries to slaves...
-MySQL Query Rules
+All traffic is sent to hostgroup1. Let's assume that now we want to send specific queries to slaves...
 
-Table mysql_query_rules has a lot of fields and it is a very powerful vehicle to control the traffic passing through ProxySQL.
+
+## MySQL Query Rules
+
+Table `mysql_query_rules` has a lot of fields and it is a very powerful vehicle to control the traffic passing through ProxySQL.
 Its table definition is as follows:
 
+``` sql
 Admin> SHOW CREATE TABLE mysql_query_rules\G
 *************************** 1. row ***************************
        table: mysql_query_rules
@@ -522,56 +571,63 @@ delay INT UNSIGNED,
 error_msg VARCHAR,
 apply INT CHECK(apply IN (0,1)) NOT NULL DEFAULT 0)
 1 row in set (0.01 sec)
+```
 
-Let’s configure ProxySQL to send the top 2 queries to slaves, and everything else to the masters
+We can now configure ProxySQL to send the top 2 queries to slaves, and everything else to the masters
 
+``` sql
 Admin> INSERT INTO mysql_query_rules (rule_id,active,username,match_digest,destination_hostgroup,apply) VALUES (10,1,'msandbox','^SELECT c FROM sbtest1 WHERE id=\?$',2,1);
 Query OK, 1 row affected (0.00 sec)
 
 Admin> INSERT INTO mysql_query_rules (rule_id,active,username,match_digest,destination_hostgroup,apply) VALUES (20,1,'msandbox','DISTINCT c FROM sbtest1',2,1);
 Query OK, 1 row affected (0.00 sec)
-
+```
 
 Few notes:
-Query rules are processed ordered by rule_id
-Only rules that have active=1 are processed. Because query rules are a very powerful tool and if misconfigured can lead to difficult debugging (we all love regex, right?) , by default active is 0 (active=0) . You should double check rules regexes before enabling them!
-The first rule example uses caret (^) and dollar ($) : these are special regex characters that mark the beginning and the end of a pattern. In that case it means that match_digest should completely match the query
-By contrast of the first rule example, the second rule example doesn’t use caret or dollar : the match could be anywhere in the query
-Pay a lot of attention to regex to avoid that some rule matches what it shouldn’t !
-Did you notice that the question mark is escaped? It has a special meaning in regex, so … as said, pay really a lot of attention to regex syntax !
-apply=1 means that no further rules are checked if there is a match
+* query rules are processed ordered by `rule_id`
+* only rules that have `active=1` are processed. Because query rules are a very powerful tool and if misconfigured can lead to difficult debugging (we all love regex, right?) , by default active is 0 (`active=0`) . You should double check rules regexes before enabling them!
+* the first rule example uses caret (`^`) and dollar (`$`) : these are special regex characters that mark the beginning and the end of a pattern. In that case it means that `match_digest` or `match_pattern` should completely match the query
+* by contrast of the first rule example, the second rule example doesn't use caret or dollar : the match could be anywhere in the query
+* pay a lot of attention to regex to avoid that some rule matches what it shouldn't !
+* you probably notice that the question mark is escaped. It has a special meaning in regex, so as said, pay really a lot of attention to regex syntax !
+* `apply=1` means that no further rules are checked if there is a match
 
-Mysql_query_rules looks like:
+Table `mysql_query_rules` looks like:
 
+``` sql
 Admin> SELECT match_digest,destination_hostgroup FROM mysql_query_rules WHERE active=1 AND username='msandbox' ORDER BY rule_id;
-+------------------------------------+-----------------------+
-| match_digest                       | destination_hostgroup |
-+------------------------------------+-----------------------+
++-------------------------------------+-----------------------+
+| match_digest                        | destination_hostgroup |
++-------------------------------------+-----------------------+
 | ^SELECT c FROM sbtest1 WHERE id=\?$ | 2                     |
 | DISTINCT c FROM sbtest1             | 2                     |
-+------------------------------------+-----------------------+
++-------------------------------------+-----------------------+
 2 rows in set (0.00 sec)
+```
 
 For these 2 specific rules, queries will be sent to slaves.
-If no rules match a query, default_hostgroup applies (that is 1 for user msandbox).
+If no rules match a query, `default_hostgroup` applies (that is 1 for user msandbox).
 
-Next, let’s reset the content of the table stats_mysql_query_digest . To do run, we can simply run any query against stats_mysql_query_digest_reset , for example:
-
+Next, let's reset the content of the table `stats_mysql_query_digest` . To achieve this we can simply run any query against `stats_mysql_query_digest_reset` , for example:
+``` sql
 SELECT * FROM stats_mysql_query_digest_reset LIMIT 1;
+```
 
-Querying stats_mysql_query_digest_reset allows to atomically get the content of the stats_mysql_query_digest table , and truncate it!
+Querying `stats_mysql_query_digest_reset` allows to atomically get the content of the `stats_mysql_query_digest` table , and truncate it!
 
-Let’s load the query rules at runtime : 
-
+Now we can load the query rules at runtime : 
+``` sql
 Admin> LOAD MYSQL QUERY RULES TO RUNTIME;
 Query OK, 0 rows affected (0.00 sec)
+```
 
-
-let’s re-execute the sysbench load: 
-
+And finally we re-execute the sysbench load: 
+```
 vagrant@ubuntu-14:~/sysbench/sysbench-0.5/sysbench$ ./sysbench --report-interval=5 --num-threads=4 --num-requests=0 --max-time=20 --test=tests/db/oltp.lua --mysql-user='msandbox' --mysql-password='msandbox' --oltp-table-size=10000 --mysql-host=127.0.0.1 --mysql-port=6033 run
+```
 
-And let’s verify the content of table stats_mysql_query_digest :
+And let's verify the content of table `stats_mysql_query_digest` :
+``` sql
 Admin> SELECT hostgroup hg, sum_time, count_star, digest_text FROM stats_mysql_query_digest ORDER BY sum_time DESC;
 +----+----------+------------+----------------------------------------------------------------------+
 | hg | sum_time | count_star | digest_text                                                          |
@@ -589,10 +645,12 @@ Admin> SELECT hostgroup hg, sum_time, count_star, digest_text FROM stats_mysql_q
 | 1  | 875343   | 5005       | BEGIN                                                                |
 +----+----------+------------+----------------------------------------------------------------------+
 11 rows in set (0.00 sec)
+```
 
 As expected, the top 2 queries are not sent to hostgroup2 (the slaves).
-Table stats_mysql_query_digest allows to aggregate results, for example:
+Table `stats_mysql_query_digest` allows to aggregate results, for example:
 
+``` sql
 Admin> SELECT hostgroup hg, SUM(sum_time), SUM(count_star) FROM stats_mysql_query_digest GROUP BY hostgroup;
 +----+---------------+-----------------+
 | hg | SUM(sum_time) | SUM(count_star) |
@@ -601,8 +659,9 @@ Admin> SELECT hostgroup hg, SUM(sum_time), SUM(count_star) FROM stats_mysql_quer
 | 2  | 23915965      | 72424           |
 +----+---------------+-----------------+
 2 rows in set (0.00 sec)
+```
 
-Query caching
+## Query caching
 
 A popular use of ProxySQL is to act as a query cache. By default, queries aren’t cached, but it can be enabled setting cache_ttl (in milliseconds) in mysql_query_rules .
 
